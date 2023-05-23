@@ -1,81 +1,76 @@
-from starlette.responses import FileResponse 
-import os
-from hstream.components import component_wrapper, ComponentsGeneric
-from pathlib import Path
-# from hstream.components import Components
-@component_wrapper
-def getToken(hs, *args, **kwargs):
-        try:
-            assert kwargs['key'] == 'auth0'
-        except:
-            raise ValueError('key must be hstreamauth0, please use `getToken(hs, key = "auth0")`')
-        f = open(Path(__file__).parent  / "index.html","r")
-        lines = f.readlines()
-        html = ''.join(lines)
-        html = html.replace('{{DOMAIN}}', 'dev-fs6qumz9.us.auth0.com')
-        html = html.replace('{{CLIENT_ID}}', '3YqE0osoSb4ahj4oNcGKTh1P7gIe9Sgl')
-        hs.doc.asis(html)
-        
-        @hs.app.get("/callback")
-        async def callback():
-            """
-            This is the callback route that will set the auth0 token once the server has authenticated the user
-            """
-            auth0_html_file = Path(__file__).parent  / "callback.html"
-            return FileResponse(auth0_html_file)
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
+from hstream.components import component_wrapper
 
-def getUserInfo(token, domain):
-    if not token or len(token) < 10:
-        return False
+AUTH0_DOMAIN = 'dev-fs6qumz9.us.auth0.com'
 
-    domain = "https://"+domain
-    if domain[-13:] != '.us.auth0.com':
-        print('domain should end with ".us.auth0.com" (no slash)')
-        raise ValueError
+config = Config('.env')  # read config from .env file
+oauth = OAuth(config)
+oauth.register(
+    name='auth0',
+    server_metadata_url=f'https://{AUTH0_DOMAIN}/.well-known/openid-configuration',
+    client_kwargs={
+        # 'scope': 'openid email profile'
+        'scope': 'read:current_user',
+        'audience':f'https://{AUTH0_DOMAIN}/api/v2/',
+    }
+)
+
+
+
+def auth_setup(hs):
+    from fastapi import FastAPI
+    from starlette.middleware.sessions import SessionMiddleware
+    if not 'SessionMiddleware' in str(hs.app.user_middleware):
+        # we only add the middleware once, otherwise we wipe out the cookies
+        hs.app = FastAPI()
+        hs.app.add_middleware(SessionMiddleware, secret_key="secret-string")
+    else:
+        print('SessionMiddleware already added')
+    @hs.app.route('/login')
+    async def login(request):
+        # absolute url for callback
+        # we will define it below
+        redirect_uri = str(request.url_for('callback'))
+        print(redirect_uri)
+        # return await oauth.auth0.authorize_access_token(request)
+        return await oauth.auth0.authorize_redirect(
+                    redirect_uri=redirect_uri, request=request
+                )
+        # return await oauth.auth0.authorize_redirect(request, redirect_uri)
     
-    from six.moves.urllib.request import urlopen
-    import json
-    from functools import wraps
-    from jose import jwt
-    jsonurl = urlopen(domain+"/.well-known/jwks.json")
-    jwks = json.loads(jsonurl.read())
-    unverified_header = jwt.get_unverified_header(token)
-    rsa_key = {}
-
-    for key in jwks["keys"]:
-        if key["kid"] == unverified_header["kid"]:
-            rsa_key = {
-                "kty": key["kty"],
-                "kid": key["kid"],
-                "use": key["use"],
-                "n": key["n"],
-                "e": key["e"]
+    @hs.app.route('/callback')
+    async def callback(request):
+        user = await oauth.auth0.authorize_access_token(request)
+        token = user['access_token']
+        html = """
+        <script>
+        function sendUserInfoBack(token) {
+                let url = `/value_changed/hstreamauth0`
+                fetch(url, {
+                method: 'POST',
+                body: new URLSearchParams({
+                    'hstreamauth0': token
+                })
+                })
             }
-    if rsa_key:
-        try:
-            payload = jwt.decode(
-                token,
-                rsa_key,
-                algorithms=["RS256"],
-                audience=domain+"/api/v2/",
-                issuer=domain+'/'
-            )
-        except jwt.ExpiredSignatureError:
-            raise 
-        except jwt.JWTClaimsError:
-            raise 
-        except Exception:
-            raise 
-        return payload
-        return payload['sub']
-    
-    # example
-    #     try:
-    #         t = ""
-    #         token = token[1:-1] # remove "" from string
-    #         print(token)
-    #         sub = getVerifiedSubFromToken(token, domain='dev-fs6qumz9.us.auth0.com')
-    #         print(sub)
-    #     except:
-    #         print('fail')
+            sendUserInfoBack("TOKEN")
+            window.location.href = "/";
+            </script>
+        """.replace('TOKEN', str(token))
+        print(token)
+        # return RedirectResponse("/")
+        return HTMLResponse(html)
 
+    return hs
+
+@component_wrapper
+def auth(hs, *args, **kwargs):
+    with hs.html('a', href='/login'):
+        hs.markdown('Login')
+
+# def login_button():
+
+#     token = await oauth.auth0.authorize_access_token(request)

@@ -1,10 +1,10 @@
 from hstream import hs
-from hstream_auth0 import getToken, getUserInfo
+from hstream_auth0 import auth, auth_setup
 
-hs.nav(['Home'], 0)
-
-token = getToken(hs, key = "auth0")
-user = getUserInfo(token, 'dev-fs6qumz9.us.auth0.com', )
-
-if user:
-    hs.markdown(user['sub'])
+hs = auth_setup(hs)
+token = auth(hs, key = 'hstreamauth0')
+print(token)
+h = hs.text_input('test', )
+hs.markdown(h)
+hs.markdown(token)
+hs.markdown("here")

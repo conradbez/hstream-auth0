@@ -1,1 +1,1 @@
-from .hstream_auth0 import getToken, getUserInfo
+from .hstream_auth0 import auth, auth_setup
